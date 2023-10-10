@@ -1,0 +1,593 @@
+---
+title: "CS5801 Re-sit Coursework Template Proforma"
+author: "2268227"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_notebook
+version: 1.0
+---
+
+
+
+# 0. Instructions 
+
+```{r}
+# Add code here to load any required libraries with `library()`.  
+# We suggest you use `install.package()` for any required packages externally to this document 
+# since installation only need be done once.
+
+install.packages('validate')
+install.packages("psych")
+install.packages("ggplot2")
+library(modeest)
+library(ggplot2)
+library(validate)
+library(dbplyr)
+
+```
+
+
+# 1. Organise and clean the data
+
+## 1.1 Subset the data into the specific dataset allocated
+
+```{r}
+# Assign your student id into the variable SID, for example:
+SID <- 2268227
+SIDoffset <- (SID %% 25) + 1  
+
+load("cw-data.RDa")
+# Now subset the housing data set
+# Pick every 30th observation starting from your offset
+# Put into your data frame named mydf (you can rename it)
+mydf <- df[seq(from=SIDoffset,to=nrow(df),by=30),]
+```
+
+
+## 1.2 Data quality analysis
+ 
+Data Quality Checking Rules:
+1)Uniqueness Check:Every ID should be unique and not duplicated across the dataset.
+2)Positivity Check:The following fields must have numbers that are positive: Price,bedrooms,bathrooms,sqftliving, sqftlot,floors,waterfron,view,condition,grade,sqft_above,sqft_basement,yr_built,yr_renovated,condition.ind.
+3)Missing Values Check: Confirm that there are no missing values within the dataset.
+4)Minimum Value Check: The values for floors, Price, and yr_built must be greater than zero.
+5)Duplicate Entries Examination:There should be no duplicate observations in the dataset.
+6)View Valid Range: The values in the 'view' field should be between 0 and 4.
+7)Grade Range Validation:The 'grade' field must contain numbers between 1 and 13.
+8)Condition Range Verification: The 'condition' field should contain values between 1 and 5.
+9)Condition.ind Verification:The 'condition.ind' field should contain only 0 or 1.
+10)Built_year Length Check:'yr_built' values must contain exactly four integers.
+
+```{r}
+head(mydf)
+
+attach(mydf)
+# Initializing the validator function to define the data quality rules
+Qaulity_rules <- validator(
+                            Price_Type = is.numeric(price),
+                            bedrooms_Type = is.numeric(bedrooms),
+                            bathrooms_Type = is.numeric(bathrooms),
+                            sqftliving_Type = is.numeric(sqft_living),
+                            sqftlot_Type = is.numeric(sqft_lot),
+                            floors_Type = is.numeric(floors),
+                            waterfront_Type = is.factor(waterfront),
+                            view_Type = is.numeric(view),
+                            condition_Type = is.numeric(condition),
+                            grade_Type = is.numeric(grade),
+                            sqft_above_Type = is.numeric(sqft_above),
+                            sqft_basement_Type = is.numeric(sqft_basement),
+                            yr_built_Type = is.numeric(yr_built),
+                            yr_renovated_Type = is.numeric(yr_renovated),
+                            condition_ind_Type = is.factor(condition.ind ),
+                            ismissing=!is.na(mydf),
+                            Datauniq= is_unique(id),
+                            NonNeg_Price = price>0,
+                            Nonneg_bedrooms= bedrooms>=0,
+                            Nonneg_bathrooms= bathrooms  >=0,
+                            Nonneg_sqftliving = sqft_living >0,
+                            NonNeg_sqftlot= sqft_lot>=0,
+                            NonNegative_floor = floors>0,
+                            NonNegative_waterfront = is.element(waterfront,c(0 ,1)) ,
+                            NonNegative_view = view>=0 & view <=4 ,
+                            NonNegative_condition = condition>=1 & condition <=5 ,
+                            NonNegative_grade = grade>=0 & grade <=13 ,
+                            NonNegative_sqft_above = sqft_above>=0 ,
+                            NonNegative_sqft_basement = sqft_basement >=0 ,
+                            NonNegative_yr_built = yr_built >0 ,
+                            NonNegative_yr_renovated = (yr_renovated >=0) ,
+                            NonNegative_condition =is.element(condition.ind,c(0 ,1)),
+                            Built_year_length = field_length( yr_built, n=4)
+                          
+                           
+                         )
+
+```
+
+In the initial phase of checking the quality of the data, the confront() method is used to compare the rules to the mydf dataset. This makes a result called rule_checked. Then, from rule_checked, a summary() is made to give an account of rule violations. The violating() function is used on specific rules (from 18th to 32nd in this case) to find problematic observations. This helps find rows in the dataset that have problems according to the stated rules.
+
+```{r}
+# Using the confront() function to apply quality rules to the dataset. 
+# The function confront() checks whether the data in 'mydf' conforms to the rules specified in 'Qaulity_rules'.
+rule_checed <- confront(mydf, Qaulity_rules)
+
+# The summary() function is used to provide a statistical summary of the results of the data validation checks performed above.
+summary(rule_checed)
+
+# Using the violating() function to return the rows in the data frame that do not conform to the rules number 18 to 32 specified in 'Qaulity_rules'. 
+# This function will help identify the specific entries in 'mydf' that have data quality issues according to the rules we have defined.
+violating(mydf, Qaulity_rules[18:32])
+
+
+
+```
+The analysis revealed that the waterfront_Type and condition_ind_Type fields needed to have their data types modified. The bedrooms field in the dataset also has three missing values and four negative values.The value of sqft_living is 0 in three records where it should be more than 0.
+
+## 1.3 Data cleaning  
+ 
+As per checking data quality and we found there are some issues:
+1)The data type of the waterfront field is not a factor. It needs to be changed to a two-level factor data type: 0 (N) and 1 (Y).
+2)The type of condition.ind should also be factor (with 1 representing good condition and 0 representing others).
+3)There are four records that violate the Nonneg_bedrooms criterion.
+4)There are three missing records, one of which is from a bathroom column.
+5)The value of sqft_living is 0 in three record.
+
+The observed problems require for data cleaning, and a new name of the condition.ind is also recommended.Change the condition.ind column to condition_ind for future flexibility.
+
+There are only three records with missing values; removing these records would be more efficient. This is possible with the na.omit() function. 
+as.factor() will be applied to the waterfront and condition.ind columns to convert their data types to factor.
+The negative values in the bedroom column appear to be typos and will be converted to positive values. 
+For the sqft_living column, the mean will be used to impute missing values.
+The column name 'condition.ind' will be changed using its index (16 in this case). 
+The cleansed data will then be saved in a new dataframe with the name mydf_cleaned for further exploratory data analysis.
+
+```{r}
+# Removing records with missing values using na.omit() function. The na.omit() function in R omits missing values from the dataframe.
+mydf <- na.omit(mydf)
+
+# Converting the 'waterfront' column from its current type to a factor type. 
+# Factors are used in R for categorical variables, where each level represents a category.
+mydf$waterfront <- as.factor(mydf$waterfront)
+
+# Converting the 'condition.ind' column from its current type to a factor type. 
+mydf$condition.ind <- as.factor(mydf$condition.ind)
+
+# Displaying the count of each level in the 'condition.ind' variable using table() function.
+table(condition.ind)
+
+# Converting negative bedroom values to positive using abs() function. 
+# This code will change the sign of negative values in the 'bedrooms' column to positive.
+mydf$bedrooms[which(mydf$bedrooms<0)] <- abs(mydf$bedrooms)
+
+# Renaming the 16th column of the dataframe from 'condition.ind' to 'condition_ind'.
+names(mydf)[16] <- "condition_ind"
+
+# Displaying the first few rows of the dataframe using the head() function to check changes made above.
+head(mydf)
+
+# Assigning the cleaned dataframe to a new variable 'mydf_clened' for further Exploratory Data Analysis (EDA).
+mydf_clened <- mydf
+
+# Displaying the first few rows of the cleaned dataframe using the head() function to check the final state of the data.
+head(mydf_clened)
+
+
+```
+
+# 2. Exploratory Data Analysis (EDA)
+
+## 2.1 EDA plan
+Exploratory Data Analysis (EDA) is a vital component of any data analysis procedure. It includes the following:
+1)Summary Statistics:Typically, EDA begins by generating summary statistics for various variables using the summary() function. This provides an overview of the central tendency, dispersion, and distribution of each variable.
+2)Numerical Data:Summary() can be used to get some simple statistics. Histograms and Q-Q plots are frequently used to visually evaluate data distribution and normality. The cor() function can be used to examine the degree to which two variables are correlated, and a scatter plot can be used to graphically depict the connection between the price(target variable) and other factors.
+3)Categorical Data:In order to visualise the distribution of categorical variables like waterfront and condition_ind, bar graphs have been used. Box plots are useful for examining the correlation between prices and other category variables.
+4)Target Variable Analysis:Price is the target variable, and box plots can be used for correlation analysis to look at how it relates to other variables(waterfront,condition_ind). If the target variable is a number and the independent variables are categories, an ANOVA test gives a number summary for examining at how the two types of variables relate to each other. This in-depth view gives useful information that can help with future data analysis and building models.
+
+## 2.2 EDA and summary of results  
+
+```{r}
+# It gives a statistical summary for each column (minimum, 1st quartile, median, mean, 3rd quartile, and maximum for numeric variables; counts of each level for factor variables)
+
+summary(mydf_clened)
+
+```
+The summary() output revealed a few new perspectives. 
+1)The prices of the homes that are now on the market range anywhere from 107,000 to 3,650,000, with a median price of 452,250.
+2)The vast majority of houses consist of between three and four bedrooms and between 1.5 and 2.5 bathrooms.
+3)The amount of square feet allocated to living area (sqft_living) might be anywhere from 0 to 7,270. The majority of buildings have anywhere from one to two floors.
+4)There are not many waterfront properties available, and most of the houses have a view score of zero, which indicates that there are either limited views or no significant views at all.
+5)The condition is typically rated at a median of 3, while the grade can range from 5 to 12 points, with a median of 7 points.
+6)The total area above ground can be anything from 550 to 6,420 square feet, while the basement can be anywhere from 0 square feet (if there isn't one) to 2,150 square feet.
+7)The years 1902 through 2015 are represented by the yr_built column, but only a few of the homes have been renovated (yr_renovated). 
+8)In conclusion, the condition_ind demonstrates that the vast majority of homes are not in good condition (0).
+
+
+The id column should be taken out of the dataset because it doesn't seem to be useful for our study.
+```{r}
+# Dropping the first column (ID column) of the dataframe 'mydf_clened'.
+mydf_clened<-mydf_clened[,-1]
+```
+
+```{r}
+# Using the str() function to display the structure of the 'mydf_clened' dataframe.
+str(mydf_clened)
+```
+There are 15 variables in the current format of the dataset. Only two of them are categorical (waterfront and condition_ind), while the rest are numbers. Over these 15 columns, there are a total of 331 observations making up the set of data.
+```{r}
+# Attach the dataframe 'mydf_clened' to the R search path. 
+# This allows us to refer to the variables in the dataframe by their names directly, without having to use the $ operator.
+attach(mydf_clened)
+
+# Creating a histogram of all numeric variables. Histograms provide a visual interpretation of numerical data by indicating the number of data points that lie within a range of values.
+
+hist(price)
+hist(bedrooms)
+hist(bathrooms)
+hist(sqft_living)
+hist(sqft_lot)
+hist(floors)
+hist(view)
+hist(condition)
+hist(grade)
+hist(sqft_above)
+hist(sqft_basement)
+hist(yr_built)
+hist(yr_renovated)
+
+
+```
+Price:Most homes cost less than $1 million. Some prices that are higher than average could be called odd, but they are not always outliers.
+
+Bedrooms:The distribution is skewed to the right, which means that most houses have between two and four beds. houses with more than 8 bedrooms are rare.
+
+Bathrooms:Most homes have between 1.5 and 3 restrooms. The bathrooms data are not normally distributed.
+
+Sqft_living:This right-skewed distribution suggests that the majority of housing have a living area between 1500 and 4000 square feet.
+
+Sqft_lot:Over 300 homes have a lot size of less than 20,000 square feet.This data is not normally distributed.
+
+Floors:More than 250 houses have one or two floors.
+
+View:More than 300 homes, a significant variety, do not have a great view.
+
+Condition:The majority of houses have a condition number between 2.5 and 3, while a few reach a score of 5.
+
+Grade:The majority of the groups are between 6 and 8. This data follows some sort of normal distribution.
+
+Sqft_above:The majority of above-ground living space in houses is between 1000 and 4000 square feet.
+
+Sqft_basement:Below-ground home space is typically less than 200 square feet.
+
+Yr_built:Most houses were built between 1940-2000. This data follows some sort of normal distribution.
+
+Yr_renovated:Few homes have been renovated; the vast majority have not.
+
+
+In conclusion, most of the data in this study are not spread out in a normal way. The skewness and kurtosis of the data can change how the data is analysed and modelled in the next sections.
+
+```{r}
+
+attach(mydf_clened)
+
+# Creating a Q-Q plot for the all numerical variables using the ggplot2 package for further checking of normality.
+ggplot(mydf_clened, aes(sample=price))+stat_qq()+stat_qq_line() + 
+  labs(title = "Q-Q Plot for sale price")
+ggplot(mydf_clened, aes(sample=bedrooms))+stat_qq()+stat_qq_line() + 
+  labs(title = "Q-Q Plot for total bedrooms")
+ggplot(mydf_clened, aes(sample=bathrooms))+stat_qq()+stat_qq_line() + 
+  labs(title = "Q-Q Plot for total bathrooms")
+ggplot(mydf_clened, aes(sample=sqft_living))+stat_qq()+stat_qq_line() + 
+  labs(title = "Q-Q Plot for total sqft_living")
+ggplot(mydf_clened, aes(sample=sqft_lot))+stat_qq()+stat_qq_line() + 
+  labs(title = "Q-Q Plot for total square feet of plot")
+ggplot(mydf_clened, aes(sample=floors))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for floor")
+ggplot(mydf_clened, aes(sample=view))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of view")
+ggplot(mydf_clened, aes(sample=condition))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of condition")
+ggplot(mydf_clened, aes(sample=grade))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of grade")
+ggplot(mydf_clened, aes(sample=sqft_above))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of sqft_above")
+ggplot(mydf_clened, aes(sample=sqft_basement))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of sqft_basement")
+ggplot(mydf_clened, aes(sample=yr_built))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of yr_built")
+ggplot(mydf_clened, aes(sample=yr_renovated))+stat_qq()+stat_qq_line() +
+  labs(title = "Q-Q Plot for total number of yr_renovated")
+
+
+```
+We can also conclude, based on the observation of the Q-Q plot, that the data do not follow a normal distribution.We are able to spot certain anomalies, but taking into account the bigger picture, we cannot classify these as outliers; therefore, we will proceed with the current data set for the next stage of our investigation.
+
+##Correlation
+```{r}
+# Identifying numerical variables and creating a new dataframe 'mydf_numerical' with only these variables.
+numerical_vars <- sapply(mydf_clened, is.numeric)
+
+# Subset the data frame with only numerical variables
+mydf_numerical <- mydf_clened[, numerical_vars]
+
+
+# Calculating and displaying the correlation matrix for 'mydf_numerical', rounded to two decimal places.
+round(cor(mydf_numerical),2)
+
+```
+When we look at the correlation matrix, we can see that there are a number of significant correlations between the price and several other factors. There is a significant positive association of 0.69 between the amount of living space (sqft_living) and the price. This suggests that prices have a tendency to go up in parallel with increases in the amount of living space. In addition, the grade of a house has a significant positive association with the price of the house, and this correlation is now at 0.67. This indicates that properties with better grades are likely to have higher prices. The square footage of the house excluding the basement (sqft_above) exhibits a somewhat positive correlation of 0.58, which suggests that the price may also increase along with the increase in the amount of living space that is located above ground level. These connections provide us with useful insights into which factors have the most significant impact on the price of the houses in the market.
+
+Given the high correlation between sqft_living, bathrooms, and sqft_above, we can conclude that these variables offer similar information. This condition is known as multicollinearity, and it can cause issues when developing a predictive model because it becomes difficult to determine the effect of each variable individually. As it is highly correlated with both bathrooms and sqft_above, we will remove the sqft_living column before constructing the model in order to mitigate this issue. This step will enhance the model's interpretability without reducing significant data.
+
+```{r}
+library(ggplot2)
+
+# Creating a scatter plot to visualize the relationship between two numerical(price and other) variables.
+plot(bedrooms, price,
+     xlab = "bedrooms",
+     ylab = "price",
+     main = "Scatter Plot: price vs bedrooms"
+)
+
+plot(bathrooms, price,
+     xlab = "bathrooms",
+     ylab = "price",
+     main = "Scatter Plot: price vs bathrooms"
+)
+
+plot(sqft_living, price,
+     xlab = "sqft_living",
+     ylab = "price",
+     main = "Scatter Plot: price vs sqft_living "
+)
+
+plot(sqft_lot, price,
+     xlab = "sqft_lot",
+     ylab = "price",
+     main = "Scatter Plot: price vs sqft_lot"
+)
+
+plot(floors, price,
+     xlab = "floors",
+     ylab = "price",
+     main = "Scatter Plot: price vs floors"
+)
+
+plot(view, price,
+     xlab = "view",
+     ylab = "price",
+     main = "Scatter Plot: price vs view"
+)
+
+plot(condition, price,
+     xlab = "condition",
+     ylab = "price",
+     main = "Scatter Plot: price vs condition "
+)
+
+plot(grade, price,
+     xlab = "grade",
+     ylab = "price",
+     main = "Scatter Plot: price vs grade"
+)
+
+plot(sqft_above, price,
+     xlab = "sqft_above",
+     ylab = "price",
+     main = "Scatter Plot: price vs sqft_above"
+)
+
+plot(sqft_basement, price,
+     xlab = "sqft_basement",
+     ylab = "price",
+     main = "Scatter Plot: price vs sqft_basement"
+)
+
+plot(yr_built, price,
+     xlab = "yr_built",
+     ylab = "price",
+     main = "Scatter Plot: price vs yr_built "
+)
+
+plot(yr_renovated, price,
+     xlab = "yr_renovated",
+     ylab = "price",
+     main = "Scatter Plot: price vs yr_renovated"
+)
+
+
+```
+When compared to the scatter plots, these provide a visual confirmation of the associations that were discovered in the correlation matrix. The scatter plot of sqft_living versus price reveals an upward trend, which indicates an upward correlation between the two variables. Plots that compare grade and sqft_above to price also show positive relationships. The conclusions from the correlation matrix are supported by the fact that these plots provide visual proof that larger, better-graded houses that have more above-ground living space tend to be priced higher.
+
+
+```{r}
+# Using the table() function to count the frequency of each level in the 'waterfront' variable in the 'mydf_clened' dataframe.
+table(mydf_clened$waterfront)
+
+```
+The 'waterfront' variable reveals that out of 331 houses, only 4 have a view of the water. This indicates that houses with waterfront views are very rare and may have a significant effect on the price of houses.
+
+```{r}
+#count the frequency of each level in the 'condition_ind' variable
+table(mydf_clened$condition_ind)
+```
+According to the 'condition_ind' variable, out of 331 houses, 113 are in good condition (represented by a '1'), whereas 218 homes are in other conditions (represented by a '0').
+
+```{r}
+# Creating bar plots for the 'waterfront' and 'condition_ind' variables to visualize their distributions.
+
+plot(mydf_clened$waterfront,
+     xlab = "waterfront",
+     ylab = "Frequency",
+     main = "Bar Plot: waterfront"
+)
+plot(mydf_clened$condition_ind,
+     xlab = "Condition",
+     ylab = "Frequency",
+     main = "Bar Plot: Condition"
+)
+
+```
+
+The bar graph for "waterfront" shows that there is a big difference between the groups, and that most of the houses do not have a waterfront. In the same way, the distribution for 'condition_ind' is skewed, but not as much, with a noticeable number of houses labelled as being in good condition. This picture shows us how these two factors in our dataset are spread out by category.
+
+```{r}
+# Creating boxplots to compare the distribution of 'price' across different levels of 'waterfront' and 'condition_ind'.
+boxplot( price~waterfront , data=mydf_clened)
+boxplot( price~condition_ind , data=mydf_clened)
+
+
+```
+Using a boxplot to look at the relationship between "price" and "waterfront," we can see a clear trend: houses with a waterfront (marked by 1) tend to be much more expensive, which suggests that this factor has a strong effect on property value. On the other hand, the boxplot of 'condition_ind' against 'price' shows a different situation. Both "good condition" and "other condition" homes seem to have similar average prices. We also see some "outliers" in the data, but these can be explained by the normal variation in house prices and shouldn't be labelled as "anomalies" upon observation.
+
+
+
+#Anova test
+```{r}
+
+# Performing an Analysis of Variance (ANOVA) to understand the impact of 'waterfront' and 'condition_ind' variables on the 'price', and summarizing the results.
+Water_condition_Aov<- aov(price~waterfront+condition_ind)
+
+summary(Water_condition_Aov)
+```
+The results of the Analysis of Variance(ANOVA) test conducted between the variables 'price,' 'waterfront,' and 'condition_ind' provide important insights. The extremely low p-value (3.16e-08) for the variable 'waterfront' shows that there is a considerable effect of this variable on the 'price', which is consistent with our boxplot analyses' findings. On the other hand, the fact that the p-value for 'condition_ind' is so high (0.93), which shows that the condition of the house does not have significant effects on the house price, is in agreement with what we've noticed earlier from the boxplot analysis.
+
+
+## 2.3 Additional insights and issues
+
+From histogram graphs we can see floors and grade are not continuous variables so they may be categorical data.
+from histogram as per gaps between those bins, we can say it may be as outliers, but as per real situation we could not consider as anomalies.
+Scatter plot and QQ-plot also some other evidence to outliers as points are at outside the boundary looks differnt from most of data points.
+
+
+
+# 3. Modelling property price
+
+## 3.1 Explain your analysis plan
+
+We have come up with an analysis plan that uses what we have learned from data cleaning and exploratory data analysis (EDA) to model property prices. Our EDA found strong links between variables like "sqft_living" and "bathrooms" and the price of the house. But to avoid problems with multicollinearity, we've chosen to leave 'sqft_living' out of our dataset.We will use a linear regression model because our goal variable, "price," is continuous. We plan to use 'step()' and 'update()' functions for efficient variable selection and model improvement. This will help us predict property prices more accurately.
+
+## 3.2 Build a model for price
+
+```{r}
+# Displaying the column names of the 'mydf_clened' dataframe.
+names(mydf_clened)
+
+# Removing the 4th column from 'mydf_clened' and storing the resultant dataframe in 'mydf_new'.
+mydf_new <- mydf_clened[, -c(4)]
+
+# Displaying the new dataframe 'mydf_new'.
+mydf_new
+
+# Fitting a linear regression model on 'mydf_new' using the 'price' as the response variable and several predictors, including their squared values, to capture possible non-linear relationships.
+lm_house_all <- lm(price ~ bedrooms + bathrooms + sqft_lot + floors + waterfront + view + condition + grade + sqft_above + sqft_basement + yr_built + yr_renovated + condition_ind + I(mydf$bedrooms^2) + I(mydf$bathrooms^2) + I(mydf$sqft_lot^2) + I(mydf$floors^2) + I(mydf$view^2) + I(mydf$condition^2) + I(mydf$grade^2) + I(mydf$sqft_above^2) + I(mydf$sqft_basement^2) + I(mydf$yr_built^2) + I(mydf$yr_renovated^2), data = mydf_new)
+
+# Displaying a summary of the fitted linear regression model.
+summary(lm_house_all)
+
+
+
+
+```
+The first linear regression model is examined, and we find that the adjusted R-squared value is 0.69. This indicates that the model accounts for 69% of the variance in the property prices, which suggests that the model is quite accurate. However, a large number of the model's predictors do not exhibit statistical significance, as seen by the p-values associated with those predictors. As a result, in order to improve the accuracy of the model, we intend to use a method called stepwise regression. This method will remove, in an iterative design, the predictors that are of the least significance, which may result in an improvement to the model's overall fit and ability to forecast.
+
+```{r}
+# Applying stepwise selection to the 'lm_house_all' linear regression model to optimize it and summarizing the final model.
+model_lm_step<-step(lm_house_all)
+
+```
+```{r}
+summary(model_lm_step)
+```
+
+After using stepwise regression, we see that only the "condition" variable is still statistically insignificant. So, to improve our model even more, we will use the "update" method to leave this variable out. This process of making small changes to our regression model over and over again is meant to improve its ability to predict by keeping only the statistically important predictors.
+
+
+```{r}
+# Updating the 'model_lm_step' model by removing the 'condition' variable from the predictors.
+model_lm_step2 <- update(model_lm_step,~.-condition)
+summary(model_lm_step2)
+
+```
+After the model has been updated, all of the factors are statistically significant. Although the "bathrooms," "sqft_lot," and "yr_built" factors only have a small effect on how much a house prices, we decided not to remove them out. This is done to keep any insight, even if it's not much, that these factors might have about predicting property prices.                             
+
+$$ price =120700000-114000\times{bathrooms} -1.323\times{sqft_lot}-292600\times{floors} +341800\times{waterfront1}-145900\times{view} +85.72\times{sqft_above} -120300\times{yr_built}+37800\times{bathrooms^2}+85230\times{floors^2}+56320\times{view^2}+9187\times{grade^2}+ 0.1014\times{sqft_basement^2}+29.97\times{yr_built^2}$$
+
+
+## 3.3 Critique model using relevant diagnostics
+
+The final model shows how property attributes affect price. To capture non-linear correlations, the model included original and squared variables. The model fits the data well, explaining 71% of property fluctuation in prices (Adjusted R-squared: 0.6959).'Grade^2' (squared grade) is the best property price predictor with a positive value of 9.187e+03. This suggests that property prices reach significantly with property grade square. The following 'sqft_above' (above-ground living space in square feet) also boosts property prices. The squared phrases 'bathrooms', 'view', and 'sqft_basement' also seem to predict home prices. Property values rise as bathrooms^2, view^2, and sqft_basement^2 increase. The binary variable 'waterfront1', which indicates if a home has a waterfront, also boosts property prices.
+
+Other factors aren't as important. The F-statistic, the p-value, and the coefficient values all show that the model is statistically significant. But it has some problems, which can be seen in the diagnostic plots, which show that the difference between the fitted values and the mean is getting bigger, and in the curved normality plot, which shows that 135, 254, and 314 could be outliers.
+
+```{r}
+# Generating diagnostic plots for the updated linear regression model 'model_lm_step2' to assess its fit and assumptions.
+
+plot(model_lm_step2)
+```
+
+
+## 3.4 Suggest improvements to your model
+
+I preferred to using logarithmic transformations to improve our model's predictive performance and the step function to remove irrelevant variables. After these adjustments, plot 1 shows how well the predicted prices match the actual values. 
+```{r}
+# Fitting a new linear regression model with the log-transformed 'price' as the response variable and several predictors including their squared values, and summarizing the results.
+lm_house_improve<-lm(log(price)~bedrooms+bathrooms+floors+waterfront+view+condition+grade+sqft_above+sqft_basement+yr_built +yr_renovated+condition_ind +I(mydf$bedrooms^2)+I(mydf$bathrooms^2)+I(mydf$floors^2)+I(mydf$view^2)
+   +I(mydf$condition^2)+I(mydf$grade^2)+I(mydf$sqft_above^2)+I(mydf$sqft_basement^2)+I(mydf$yr_built^2)+I(mydf$yr_renovated^2))
+
+summary(lm_house_improve)
+```
+```{r}
+# Applying stepwise selection to the 'lm_house_improve' model to optimize it.
+model_lmimprove_step<-step(lm_house_improve)
+
+```
+```{r}
+summary(model_lmimprove_step)
+```
+
+Logarithmic transformations and the step function pruned unimportant variables. The number of bedrooms, baths, floors, and property condition affect the logarithm of the price, according to our model. The model explains 66.2% of the log-transformed variance in prices, which is suitable.
+```{r}
+# Generating diagnostic plots for the optimized linear regression model 'model_lmimprove_step' to assess its fit and assumptions.
+plot(model_lmimprove_step)
+```
+Observing the residuals versus fitted diagram (plot1), we can see that our predicted values and actual values are well aligned. As the residuals are randomly dispersed along the horizontal axis, this indicates that the model has a solid performance, demonstrating a strong fit for linear regression.
+
+# 4. Modelling Property Condition
+
+## 4.1 Plan and build a model for the likelihood of a property being in good condition (using the condition.ind variable provided).
+
+As we are working with binary data (good condition versus other condition, represented by the 'condition_ind' variable), we intend to use a logistic regression model to predict the likelihood that a property is in good condition. This model will include price, number of bedrooms, bathrooms, floors, waterfront, view, grade, square footage of the house above ground, square footage of the basement, year of construction, and year of last renovation. These variables were chosen because they are feasible factors influencing the condition of a property. A summary of this logistic regression model, 'Model_loge', will provide crucial information regarding the relationship between these variables and the condition of the property. 
+
+```{r}
+# Removing the 4th column from 'mydf_clened' and storing the resultant dataframe in 'mydf_new_log'.
+mydf_new_log <- mydf_clened[, -4]
+
+# Displaying the new dataframe 'mydf_new_log'.
+mydf_new_log
+
+# Attaching the 'mydf_new_log' dataframe to the R search path for easier variable access.
+attach(mydf_new_log)
+
+# Fitting a Generalized Linear Model (GLM) with a binomial link function to predict 'condition_ind' using several predictors.
+Model_loge <- glm(condition_ind ~ price + bedrooms + bathrooms + floors + waterfront + view + condition + grade + sqft_above + sqft_basement + yr_built + yr_renovated, family = binomial)
+
+# Displaying a summary of the fitted GLM.
+summary(Model_loge)
+```
+The logistic regression model was developed with 'condition_ind' as the dependent variable and numerous property characteristics as predictors. All predictors have p-values of 1, indicating that they may not affect the condition of the property. Even though the model has a low residual variance and an AIC of 26, the insignificance of predictors puts query on its reliability.
+
+#Odd ratios and odds
+
+```{r}
+# Extracting and exponentiating the coefficients of the 'Model_loge' to interpret them on the odds ratio scale.
+exp(coef(Model_loge))
+
+
+```
+In our logistic regression model, these values show how likely each variable is to be true. Most of the odds ratios are close to 1, which means that they don't have much of an effect on the state of the property. For example, a one-unit increase in 'price' changes the odds of having a good property state by a factor of 1. This is almost no effect. But the odds ratio for 'condition' is very high, which suggests that it has a big effect on property condition.
+
+# References  
+
+1)@https://bookdown.org/martin_shepperd/ModernDataBook/C5_DataQualCheck.html, 
+2)@https://data-cleaning.github.io/validate/,
+3)@https://www.dataquest.io/blog/r-markdown-guide-cheatsheet/#tve-jump-17333da0719
+
+
